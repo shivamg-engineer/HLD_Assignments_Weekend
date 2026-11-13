@@ -35,7 +35,50 @@ public class ChatClient {
          *   Notice: there's no request/response here. You send whenever you like, and
          *   PrintingListener prints whatever the server pushes, whenever it pushes it.
          */
-        throw new UnsupportedOperationException("TODO(5) not implemented yet");
+
+        // 1. Establish WebSocket connection
+        WebSocket ws = HttpClient.newHttpClient()
+                .newWebSocketBuilder().buildAsync(uri, new PrintingListener()).join();
+
+        System.out.println("Connected as " + user);
+        System.out.println("Type a message or /quit to leave");
+
+        // 2. Read Terminal input
+        BufferedReader reader= new BufferedReader(
+                new InputStreamReader(System.in)
+        );
+
+        String line;
+
+        while((line = reader.readLine()) != null){
+            // 3. Handle disconnect
+            if (line.equals("/quit")) {
+
+                ws.sendClose(
+                        WebSocket.NORMAL_CLOSURE,
+                        "bye"
+                ).join();
+
+                break;
+            }
+
+            // 4. Escape JSON special characters
+            String escaped = line
+                    .replace("\\", "\\\\")
+                    .replace("\"", "\\\"");
+
+
+            // 5. Construct JSON
+            String json = "{\"type\":\"message\",\"text\":\""
+                    + escaped + "\"}";
+
+            // 6. Send message to server
+            ws.sendText(json, true).join();
+
+        }
+
+
+//        throw new UnsupportedOperationException("TODO(5) not implemented yet");
     }
 
     /** Called by the JDK whenever the server pushes something. (given) */

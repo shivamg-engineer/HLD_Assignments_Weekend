@@ -10,6 +10,8 @@ import java.security.MessageDigest;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
+
+
 /**
  * Exercise 04 — WebSockets, from scratch (plain sockets, no framework).
  *
@@ -51,7 +53,13 @@ public class ChatServer {
             while (true) {
                 Socket socket = server.accept();
                 socket.setTcpNoDelay(true);
-                Thread.startVirtualThread(() -> handle(socket));   // one cheap thread per connection
+                Thread.startVirtualThread(() -> {
+                    try {
+                        handle(socket);
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
+                });   // one cheap thread per connection
             }
         }
     }
@@ -68,7 +76,16 @@ public class ChatServer {
      * Hints: MessageDigest.getInstance("SHA-1"), Base64.getEncoder()
      */
     static String acceptKey(String secWebSocketKey) throws Exception {
-        throw new UnsupportedOperationException("TODO(1) not implemented yet");
+        String combined= secWebSocketKey + WEBSOCKET_GUID;
+
+        MessageDigest sha1= MessageDigest.getInstance("SHA-1");
+
+        byte[] hash=sha1.digest(
+                combined.getBytes(StandardCharsets.UTF_8)
+        );
+
+        return Base64.getEncoder().encodeToString(hash);
+//        throw new UnsupportedOperationException("TODO(1) not implemented yet");
     }
 
     /**
@@ -79,7 +96,25 @@ public class ChatServer {
      *   Use broadcast(...) below.
      */
     static void onOpen(Client c) {
-        throw new UnsupportedOperationException("TODO(2) not implemented yet");
+
+        //1. Get existing room or create a new one
+        Set<Client> clients = ROOMS.computeIfAbsent(
+                c.room,
+                k -> ConcurrentHashMap.newKeySet()
+        );
+
+        // 2. Add the newly connected client
+        clients.add(c);
+
+        //3. Notify everyone in the room
+        broadcast(
+                c.room,
+                system(c.room,c.user +" joined"),
+                null
+        );
+
+
+//        throw new UnsupportedOperationException("TODO(2) not implemented yet");
     }
 
     /**
@@ -92,15 +127,89 @@ public class ChatServer {
      *   - anything else                    -> c.send({"type":"error","text":"unknown message type"})
      */
     static void onMessage(Client c, String text) throws IOException {
-        throw new UnsupportedOperationException("TODO(3) not implemented yet");
+
+        // 1. Parse incoming JSON
+        Map<String, Object> incoming =
+                (Map<String, Object>) Json.parse(text);
+
+        // 2. Extract message type
+        String type = (String) incoming.get("type");
+
+        // 3. Handle normal message
+        if ("message".equals(type)) {
+
+            String messageText = (String) incoming.get("text");
+
+            // Ignore blank messages
+            if (messageText == null || messageText.isBlank()) {
+                return;
+            }
+
+            Map<String, Object> message = new LinkedHashMap<>();
+
+            message.put("type", "message");
+            message.put("from", c.user);
+            message.put("text", messageText);
+            message.put("at", System.currentTimeMillis());
+
+            broadcast(c.room, message, null);
+        }
+
+        // 4. Handle typing indicator
+        else if ("typing".equals(type)) {
+
+            Map<String, Object> message = new LinkedHashMap<>();
+
+            message.put("type", "typing");
+            message.put("from", c.user);
+
+            broadcast(c.room, message, c);
+        }
+
+        // 5. Handle unknown message types
+        else {
+
+            Map<String, Object> error = new LinkedHashMap<>();
+
+            error.put("type", "error");
+            error.put("text", "unknown message type");
+
+            c.send(Json.write(error));
+        }
+
+//        throw new UnsupportedOperationException("TODO(3) not implemented yet");
     }
 
     /**
      * TODO(4): The connection is gone (closed tab, lost network, close frame...).
      *   Remove c from its room (drop the room when it's empty) and tell the others "<user> left".
      */
-    static void onClose(Client c) {
-        throw new UnsupportedOperationException("TODO(4) not implemented yet");
+    static void onClose(Client c) throws IOException{
+
+        // 1. Find the client's room
+        Set<Client> clients = ROOMS.get(c.room);
+
+        // 2. If room doesn't exist, nothing to do
+        if (clients == null) {
+            return;
+        }
+
+        // 3. Remove disconnected client
+        clients.remove(c);
+
+        // 4. If room becomes empty, delete it
+        if (clients.isEmpty()) {
+            ROOMS.remove(c.room, clients);
+            return;
+        }
+
+        // 5. Notify remaining clients
+        broadcast(
+                c.room,
+                system(c.room, c.user + " left"),
+                null
+        );
+//        throw new UnsupportedOperationException("TODO(4) not implemented yet");
     }
 
     // =====================================================================
@@ -129,7 +238,7 @@ public class ChatServer {
         return m;
     }
 
-    static void handle(Socket socket) {
+    static void handle(Socket socket) throws IOException{
         Client client = null;
         try (socket) {
             InputStream in = new BufferedInputStream(socket.getInputStream());
